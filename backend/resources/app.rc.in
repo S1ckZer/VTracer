@@ -1,0 +1,8 @@
+// Auto-generated from app.rc.in by CMake (configure_file).
+// IDs must match the constants in AppWindow.cpp / loadEmbeddedIndex().
+
+#define IDR_INDEX_HTML 1001
+#define IDI_VTRACER    1
+
+IDR_INDEX_HTML RCDATA "@FRONTEND_HTML@"
+IDI_VTRACER    ICON   "@APP_ICON@"

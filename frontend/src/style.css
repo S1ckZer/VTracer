@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* Tailwind v4 theme tokens - keep palette tight. */
+@theme {
+  --color-bg: #04060c;
+  --color-panel: #0b1120;
+  --color-panel-2: #0f172a;
+  --color-border: #1e293b;
+  --color-accent: #3b82f6;
+  --color-accent-soft: #1d4ed8;
+  --color-good: #10b981;
+  --color-warn: #f59e0b;
+  --color-bad: #ef4444;
+
+  --font-sans: "Inter", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+html, body, #app { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: radial-gradient(1200px 600px at 20% -10%, rgba(59, 130, 246, 0.10), transparent 50%),
+              radial-gradient(1000px 500px at 100% 0%, rgba(16, 185, 129, 0.06), transparent 60%),
+              #04060c;
+}
+
+/* Hide scrollbars in tiny panels but keep functionality. */
+.scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }
+
+/* Subtle pulse used for "tracing in progress" indicators. */
+@keyframes nt-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1);   }
+  50%      { opacity: 0.55; transform: scale(0.98); }
+}
+.nt-pulse { animation: nt-pulse 1.4s ease-in-out infinite; }
