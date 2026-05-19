@@ -1,7 +1,7 @@
 import { reactive, ref } from 'vue';
 import type {
-  CatalogState, LogEntry, LogLevel, ModelLookup,
-  RecentSave, SaveResult, TraceFinished, TraceSide,
+  CatalogState, LogEntry, LogLevel, ModelLookup, Protocol,
+  RecentSave, SaveResult, TraceFinished, TraceRaw, TraceSide, WireEvent,
 } from '../types';
 
 type Outbound =
@@ -9,7 +9,9 @@ type Outbound =
   | { type: 'list_ports' }
   | { type: 'reload_csv' }
   | { type: 'lookup_model'; model: string }
-  | { type: 'start_trace'; port: string; side: TraceSide; simulate: boolean; expected?: { aL: number; bL: number; aR: number; bR: number } | null }
+  | { type: 'start_trace'; port: string; side: TraceSide; simulate: boolean; protocol: Protocol; expected?: { aL: number; bL: number; aR: number; bR: number } | null }
+  | { type: 'start_monitor'; port: string }
+  | { type: 'stop_monitor' }
   | { type: 'save_result' } & SaveResultPayload
   | { type: 'window'; action: 'drag' | 'minimize' | 'maximize' | 'close' }
   | { type: 'ping' };
@@ -37,7 +39,10 @@ type Inbound =
   | { type: 'model_lookup' } & ModelLookup
   | { type: 'pong' }
   | { type: 'save_result_done' } & SaveResult
-  | { type: 'trace_finished' } & TraceFinished;
+  | { type: 'trace_finished' } & TraceFinished
+  | { type: 'wire'; dir: 'tx' | 'rx'; hex: string; n: number }
+  | { type: 'trace_raw' } & TraceRaw
+  | { type: 'monitor_state'; running: boolean; error: string };
 
 const isWebView = typeof window !== 'undefined' && !!window.chrome?.webview;
 
@@ -57,10 +62,26 @@ export function useBridge() {
   const lastResult = ref<TraceFinished | null>(null);
   const recentSaves = ref<RecentSave[]>([]);
 
+  // Sniffer / wire-protocol state.
+  const wireLog = ref<WireEvent[]>([]);
+  const lastRaw = ref<TraceRaw | null>(null);
+  const monitorRunning = ref(false);
+
   function pushLog(level: LogLevel, message: string) {
     const time = new Date().toLocaleTimeString('de-DE', { hour12: false });
     log.value.push({ time, level, message });
     if (log.value.length > 400) log.value.splice(0, log.value.length - 400);
+  }
+
+  function pushWire(dir: 'tx' | 'rx', hex: string, n: number) {
+    const time = new Date().toLocaleTimeString('de-DE', { hour12: false });
+    wireLog.value.push({ time, dir, hex, n });
+    if (wireLog.value.length > 4000) wireLog.value.splice(0, wireLog.value.length - 4000);
+  }
+
+  function clearWireLog() {
+    wireLog.value = [];
+    lastRaw.value = null;
   }
 
   function send(msg: Outbound) {
@@ -123,6 +144,19 @@ export function useBridge() {
         }
         break;
       }
+      case 'wire':
+        pushWire(msg.dir, msg.hex, msg.n);
+        break;
+      case 'trace_raw':
+        lastRaw.value = { protocol: msg.protocol, bytes: msg.bytes, hex: msg.hex, ascii: msg.ascii };
+        pushLog('info', `Raw payload captured: ${msg.bytes} bytes (${msg.protocol})`);
+        break;
+      case 'monitor_state':
+        monitorRunning.value = msg.running;
+        if (msg.error) pushLog('error', `Sniffer: ${msg.error}`);
+        else pushLog(msg.running ? 'info' : 'info',
+                     msg.running ? 'Sniffer started' : 'Sniffer stopped');
+        break;
       case 'pong':
       default:
         break;
@@ -150,14 +184,19 @@ export function useBridge() {
     }, 50);
   }
 
-  function startTrace(port: string, side: TraceSide, simulate = false) {
+  function startTrace(port: string, side: TraceSide, simulate = false, protocol: Protocol = 'nidek') {
     if (!simulate && !port) return;
     tracing.value = true;
     tracingSide.value = side;
     const exp = lookup.value?.expected ? { ...lookup.value.expected } : null;
-    pushLog('info', `Starting trace (${side})${simulate ? ' [SIM]' : ` on ${port}`}...`);
-    send({ type: 'start_trace', port, side, simulate, expected: exp });
+    pushLog('info', `Starting trace (${side}, ${protocol})${simulate ? ' [SIM]' : ` on ${port}`}...`);
+    send({ type: 'start_trace', port, side, simulate, protocol, expected: exp });
   }
+  function startMonitor(port: string) {
+    if (!port) return;
+    send({ type: 'start_monitor', port });
+  }
+  function stopMonitor() { send({ type: 'stop_monitor' }); }
   function reloadCsv()                       { send({ type: 'reload_csv' });  }
   function listPorts()                       { send({ type: 'list_ports' });  }
   function lookupModel(model: string)        {
@@ -204,10 +243,22 @@ export function useBridge() {
       return;
     }
     if (msg.type === 'start_trace') {
-      pushLog('debug', `PC -> ENQ (${msg.side})`);
-      setTimeout(() => pushLog('debug', 'LT -> ACK'), 200);
-      setTimeout(() => pushLog('debug', `PC -> STX REQ=${msg.side === 'left' ? 'TRCL' : msg.side === 'right' ? 'TRCR' : 'TRC'} ETX BCC`), 400);
-      setTimeout(() => pushLog('info', 'Received 6324 bytes from tracer'), 700);
+      // Synthesize a Nidek-native handshake in the wire log so the sniffer
+      // panel renders something in dev mode.
+      pushLog('info', `Mock trace (${msg.protocol})`);
+      const fakeWires: Array<[ 'tx' | 'rx', string ]> = msg.protocol === 'nidek'
+        ? [
+            ['tx', '05'], ['rx', '06'],
+            ['tx', '52 00 00 09 5B'], ['rx', '06'], ['tx', '04'],
+            ['rx', '05'], ['tx', '06'],
+            ['rx', '52 21 00 00 73'], ['tx', '06'],
+          ]
+        : [ ['rx', '1C'], ['rx', '52=...HBOX=53.47;VBOX=47.52;...' .replace(/[^\x20-\x7e]/g,'.')] ];
+      let t = 0;
+      for (const [d, h] of fakeWires) {
+        setTimeout(() => pushWire(d, h, h.split(' ').length), t);
+        t += 60;
+      }
       setTimeout(() => {
         const base = { aL: 53.47, bL: 47.52, aR: 53.38, bR: 47.48 };
         const jitter = () => (Math.random() - 0.5) * 0.6;
@@ -243,6 +294,16 @@ export function useBridge() {
       }, 900);
       return;
     }
+    if (msg.type === 'start_monitor') {
+      monitorRunning.value = true;
+      pushLog('info', `Mock sniffer on ${msg.port}`);
+      return;
+    }
+    if (msg.type === 'stop_monitor') {
+      monitorRunning.value = false;
+      pushLog('info', 'Mock sniffer stopped');
+      return;
+    }
     if (msg.type === 'save_result') {
       handle({
         type: 'save_result_done',
@@ -255,7 +316,9 @@ export function useBridge() {
 
   return {
     ports, log, tracing, tracingSide, catalog, lookup, lastResult, recentSaves,
+    wireLog, lastRaw, monitorRunning,
     startTrace, reloadCsv, listPorts, lookupModel, saveResult,
+    startMonitor, stopMonitor, clearWireLog,
     winDrag, winMinimize, winMaximize, winClose,
   };
 }

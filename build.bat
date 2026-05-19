@@ -2,7 +2,7 @@
 setlocal enableextensions
 
 REM Single-click builder for VTracer (Release x64, standalone).
-REM Output: build-release\Release\VTracer.exe and VTracer-0.1.1-win-x64.zip
+REM Output: build-release\Release\VTracer.exe and VTracer-0.1.2-win-x64.zip
 REM Requirements: Visual Studio 2022 Build Tools (C++), CMake, Node.js, WebView2 SDK.
 
 set "SCRIPT_DIR=%~dp0"
@@ -51,8 +51,8 @@ echo Building ...
 cmake --build "%BUILD_DIR%" --config Release || goto :error
 
 echo Packaging ...
-set "STAGE=%BUILD_DIR%\package\VTracer-0.1.1-win-x64"
-set "ZIP=%SCRIPT_DIR%VTracer-0.1.1-win-x64.zip"
+set "STAGE=%BUILD_DIR%\package\VTracer-0.1.2-win-x64"
+set "ZIP=%SCRIPT_DIR%VTracer-0.1.2-win-x64.zip"
 if exist "%BUILD_DIR%\package" rmdir /s /q "%BUILD_DIR%\package"
 mkdir "%STAGE%" || goto :error
 copy /y "%BUILD_DIR%\Release\VTracer.exe" "%STAGE%\" >nul || goto :error

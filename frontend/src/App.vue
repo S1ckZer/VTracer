@@ -7,11 +7,14 @@ import GlassesWireframe from './components/GlassesWireframe.vue';
 import TraceButtons from './components/TraceButtons.vue';
 import ActivityLog from './components/ActivityLog.vue';
 import RecentSaves from './components/RecentSaves.vue';
-import type { TraceSide } from './types';
+import SnifferPanel from './components/SnifferPanel.vue';
+import type { Protocol, TraceSide } from './types';
 
 const {
   ports, log, tracing, tracingSide, catalog, lookup, lastResult, recentSaves,
+  wireLog, lastRaw, monitorRunning,
   startTrace, reloadCsv, listPorts, lookupModel, saveResult,
+  startMonitor, stopMonitor, clearWireLog,
   winDrag, winMinimize, winMaximize, winClose,
 } = useBridge();
 
@@ -24,12 +27,15 @@ const note  = ref('');
 // origin); wrap so a failure here doesn't take the whole app down.
 const TOL_KEY = 'vtracer.tolerance';
 const SIM_KEY = 'vtracer.sim';
+const PROTO_KEY = 'vtracer.protocol';
 function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k: string, v: string)     { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
 const tolerance = ref<number>(parseFloat(lsGet(TOL_KEY) ?? '') || 0.50);
 const simulate  = ref<boolean>(lsGet(SIM_KEY) === '1');
+const protocol  = ref<Protocol>((lsGet(PROTO_KEY) as Protocol) || 'nidek');
 watch(tolerance, (v) => lsSet(TOL_KEY, v.toFixed(2)));
 watch(simulate,  (v) => lsSet(SIM_KEY, v ? '1' : '0'));
+watch(protocol,  (v) => lsSet(PROTO_KEY, v));
 
 watch(ports, (ps) => {
   if (!selectedPort.value && ps.length > 0) selectedPort.value = ps[0];
@@ -45,7 +51,7 @@ const canSave = computed(() => {
 
 function onTrace(side: TraceSide) {
   if (!simulate.value && !selectedPort.value) return;
-  startTrace(selectedPort.value, side, simulate.value);
+  startTrace(selectedPort.value, side, simulate.value, protocol.value);
 }
 
 function onSave() {
@@ -97,7 +103,20 @@ function onClear() { lastResult.value = null; }
           :tracing="tracing"
           :tolerance="tolerance"
         />
-        <ActivityLog :entries="log" class="min-h-0 flex-1" />
+        <div class="grid min-h-0 flex-1 gap-4 md:grid-cols-2">
+          <ActivityLog :entries="log" class="min-h-0" />
+          <SnifferPanel
+            :port="selectedPort"
+            v-model:protocol="protocol"
+            :wire-log="wireLog"
+            :last-raw="lastRaw"
+            :monitor-running="monitorRunning"
+            @start-monitor="() => startMonitor(selectedPort)"
+            @stop-monitor="stopMonitor"
+            @clear-wire="clearWireLog"
+            class="min-h-0"
+          />
+        </div>
       </section>
 
       <section class="flex min-h-0 flex-col gap-4">

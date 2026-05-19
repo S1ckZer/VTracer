@@ -95,6 +95,7 @@ int SerialPort::read(uint8_t* buf, size_t maxBytes) {
     DWORD got = 0;
     BOOL ok = ::ReadFile(handle_, buf, static_cast<DWORD>(maxBytes), &got, nullptr);
     if (!ok) { setLastError_("ReadFile"); return -1; }
+    if (got > 0) emitWire_('r', buf, got);
     return static_cast<int>(got);
 }
 
@@ -103,12 +104,40 @@ int SerialPort::write(const uint8_t* buf, size_t bytes) {
     DWORD wrote = 0;
     BOOL ok = ::WriteFile(handle_, buf, static_cast<DWORD>(bytes), &wrote, nullptr);
     if (!ok) { setLastError_("WriteFile"); return -1; }
+    if (wrote > 0) emitWire_('t', buf, wrote);
     return static_cast<int>(wrote);
 }
 
 void SerialPort::purge() {
     if (!isOpen()) return;
     ::PurgeComm(handle_, PURGE_RXCLEAR | PURGE_TXCLEAR | PURGE_RXABORT | PURGE_TXABORT);
+}
+
+void SerialPort::emitWire_(char dir, const uint8_t* data, size_t n) {
+    if (wireCb_ && n) wireCb_(dir, data, n);
+}
+
+std::vector<uint8_t> SerialPort::readExact(size_t n, uint32_t totalMs) {
+    std::vector<uint8_t> out;
+    out.reserve(n);
+    if (!isOpen()) return out;
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(totalMs);
+    uint8_t tmp[512];
+    while (out.size() < n) {
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        size_t want = std::min(n - out.size(), sizeof(tmp));
+        DWORD got = 0;
+        BOOL ok = ::ReadFile(handle_, tmp, static_cast<DWORD>(want), &got, nullptr);
+        if (!ok) { setLastError_("ReadFile"); break; }
+        if (got > 0) {
+            emitWire_('r', tmp, got);
+            out.insert(out.end(), tmp, tmp + got);
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    return out;
 }
 
 std::vector<uint8_t> SerialPort::readUntilQuiet(uint32_t quietMs, size_t maxBytes) {
@@ -122,6 +151,7 @@ std::vector<uint8_t> SerialPort::readUntilQuiet(uint32_t quietMs, size_t maxByte
         BOOL ok = ::ReadFile(handle_, tmp, sizeof(tmp), &got, nullptr);
         if (!ok) { setLastError_("ReadFile"); break; }
         if (got > 0) {
+            emitWire_('r', tmp, got);
             out.insert(out.end(), tmp, tmp + got);
             lastByte = std::chrono::steady_clock::now();
         } else {
@@ -144,6 +174,7 @@ std::vector<uint8_t> SerialPort::readUntilByte(uint8_t terminator, uint32_t tota
         DWORD got = 0;
         BOOL ok = ::ReadFile(handle_, tmp, sizeof(tmp), &got, nullptr);
         if (!ok) { setLastError_("ReadFile"); break; }
+        if (got > 0) emitWire_('r', tmp, got);
         for (DWORD i = 0; i < got; ++i) {
             out.push_back(tmp[i]);
             if (tmp[i] == terminator) return out;

@@ -434,6 +434,8 @@ void AppWindow::onMessageFromJs_(const std::wstring& wjson) {
     else if (type == "lookup_model")   { handleLookupModel_(parseStringField(json, "model")); }
     else if (type == "save_result")    { handleSaveResult_(json); }
     else if (type == "start_trace")    { handleStartTrace_(json); }
+    else if (type == "start_monitor")  { handleStartMonitor_(json); }
+    else if (type == "stop_monitor")   { handleStopMonitor_(); }
     else if (type == "window")         { handleWindowAction_(parseStringField(json, "action")); }
     else if (type == "ping")           {
         JsonWriter w; { auto r = w.obj(); w.key("type"); w.str("pong"); }
@@ -519,11 +521,97 @@ void AppWindow::handleStartTrace_(const std::string& json) {
         return;
     }
     if (side.empty()) side = "both";
-    std::thread(&AppWindow::runTraceWorker_, this, portName, side, simulate, exp).detach();
+
+    std::string protocolName = parseStringField(json, "protocol");
+    if (protocolName.empty()) protocolName = "nidek";
+
+    std::thread(&AppWindow::runTraceWorker_, this, portName, side, simulate, exp, protocolName).detach();
+}
+
+void AppWindow::handleStartMonitor_(const std::string& json) {
+    std::string portName = parseStringField(json, "port");
+    if (portName.empty()) {
+        JsonWriter w;
+        { auto r = w.obj();
+          w.key("type"); w.str("monitor_state");
+          w.key("running"); w.boolean(false);
+          w.key("error"); w.str("No COM port selected"); }
+        postToJs_(std::move(w).str_());
+        return;
+    }
+    if (monitorRunning_.exchange(true)) {
+        // Already running; ignore.
+        return;
+    }
+    monitorStop_ = false;
+    std::thread(&AppWindow::runMonitorWorker_, this, portName).detach();
+}
+
+void AppWindow::handleStopMonitor_() {
+    monitorStop_ = true;
+}
+
+void AppWindow::emitWire_(char dir, const uint8_t* data, size_t n) {
+    if (!data || !n) return;
+    static const char* hex = "0123456789ABCDEF";
+    std::string s;
+    s.reserve(n * 3);
+    for (size_t i = 0; i < n; ++i) {
+        if (i) s.push_back(' ');
+        s.push_back(hex[data[i] >> 4]);
+        s.push_back(hex[data[i] & 0xF]);
+    }
+    JsonWriter w;
+    { auto r = w.obj();
+      w.key("type"); w.str("wire");
+      w.key("dir");  w.str(dir == 't' ? "tx" : "rx");
+      w.key("hex");  w.str(s);
+      w.key("n");    w.num(static_cast<int64_t>(n)); }
+    postToJs_(std::move(w).str_());
+}
+
+void AppWindow::runMonitorWorker_(std::string portName) {
+    auto logCb = [this](std::string_view level, std::string_view msg) {
+        JsonWriter w;
+        { auto r = w.obj();
+          w.key("type"); w.str("log");
+          w.key("level"); w.str(level);
+          w.key("msg"); w.str(msg); }
+        postToJs_(std::move(w).str_());
+    };
+
+    NidekTracer tracer(logCb);
+    tracer.setWireCallback([this](char dir, const uint8_t* data, size_t n) {
+        emitWire_(dir, data, n);
+    });
+
+    std::string err = tracer.open(portName);
+    {
+        JsonWriter w;
+        { auto r = w.obj();
+          w.key("type"); w.str("monitor_state");
+          w.key("running"); w.boolean(err.empty());
+          w.key("error"); w.str(err); }
+        postToJs_(std::move(w).str_());
+    }
+    if (err.empty()) {
+        tracer.monitor(&monitorStop_);
+        tracer.close();
+    }
+    monitorRunning_ = false;
+    monitorStop_ = false;
+
+    JsonWriter w;
+    { auto r = w.obj();
+      w.key("type"); w.str("monitor_state");
+      w.key("running"); w.boolean(false);
+      w.key("error"); w.str(""); }
+    postToJs_(std::move(w).str_());
 }
 
 void AppWindow::runTraceWorker_(std::string portName, std::string side,
-                                 bool simulate, ExpectedFrame expected) {
+                                 bool simulate, ExpectedFrame expected,
+                                 std::string protocolName) {
     auto logCb = [this](std::string_view level, std::string_view msg) {
         JsonWriter w;
         { auto r = w.obj();
@@ -585,6 +673,12 @@ void AppWindow::runTraceWorker_(std::string portName, std::string side,
         logCb("info", "Simulator: done");
     } else {
         NidekTracer tracer(logCb);
+        tracer.setWireCallback([this](char dir, const uint8_t* data, size_t n) {
+            emitWire_(dir, data, n);
+        });
+        if (protocolName == "vca") tracer.setProtocol(NidekTracer::Protocol::Vca);
+        else                       tracer.setProtocol(NidekTracer::Protocol::NidekNative);
+
         std::string err = tracer.open(portName);
         if (!err.empty()) {
             JsonWriter w;
@@ -605,6 +699,27 @@ void AppWindow::runTraceWorker_(std::string portName, std::string side,
 
         t = tracer.runTrace(mode);
         tracer.close();
+
+        // Ship the full raw payload to the UI so the user can copy the hex
+        // and we can iterate on the parser without sniffing again.
+        if (!t.rawPayload.empty()) {
+            static const char* hex = "0123456789ABCDEF";
+            std::string hexDump;
+            hexDump.reserve(t.rawPayload.size() * 3);
+            for (size_t i = 0; i < t.rawPayload.size(); ++i) {
+                if (i) hexDump.push_back(' ');
+                hexDump.push_back(hex[t.rawPayload[i] >> 4]);
+                hexDump.push_back(hex[t.rawPayload[i] & 0xF]);
+            }
+            JsonWriter w;
+            { auto r = w.obj();
+              w.key("type");      w.str("trace_raw");
+              w.key("protocol");  w.str(protocolName);
+              w.key("bytes");     w.num(static_cast<int64_t>(t.rawPayload.size()));
+              w.key("hex");       w.str(hexDump);
+              w.key("ascii");     w.str(t.rawText); }
+            postToJs_(std::move(w).str_());
+        }
     }
 
     auto emitNum = [](JsonWriter& w, const char* key, std::optional<double> v) {

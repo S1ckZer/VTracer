@@ -45,13 +45,20 @@ private:
     void handleReloadCsv_();
     void handleLookupModel_(const std::string& model);
     void handleSaveResult_(const std::string& json);
+    void handleStartMonitor_(const std::string& json);
+    void handleStopMonitor_();
     void sendCatalogState_();
 
     struct ExpectedFrame {
         std::optional<double> aL, bL, aR, bR;
     };
     void runTraceWorker_(std::string portName, std::string side,
-                         bool simulate, ExpectedFrame expected);
+                         bool simulate, ExpectedFrame expected,
+                         std::string protocolName);
+    void runMonitorWorker_(std::string portName);
+
+    // Forward a chunk of wire bytes to the JS side as a `wire` event.
+    void emitWire_(char dir, const uint8_t* data, size_t n);
 
     static std::string findCatalogDir_();
     static std::string resultsCsvPath_();
@@ -74,6 +81,8 @@ private:
     static constexpr UINT WM_APP_SEND = WM_APP + 1;
 
     std::atomic<bool> tracing_{false};
+    std::atomic<bool> monitorStop_{false};
+    std::atomic<bool> monitorRunning_{false};
 
     // Width of the window edge reserved for the resize hit-test, since
     // WM_NCCALCSIZE returns 0 (entire window is client area).

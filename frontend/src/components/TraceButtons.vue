@@ -55,7 +55,7 @@ function disabled() {
         <span class="text-xs font-semibold uppercase tracking-wider">
           {{ side === 'left' ? 'Links' : side === 'right' ? 'Rechts' : 'Mitte' }}
         </span>
-        <span class="text-[10px] text-slate-500">REQ={{ side === 'left' ? 'TRCL' : side === 'right' ? 'TRCR' : 'TRC' }}</span>
+        <span class="text-[10px] text-slate-500">{{ side === 'left' ? 'Linkes Glas' : side === 'right' ? 'Rechtes Glas' : 'Beide' }}</span>
       </button>
     </div>
 

@@ -60,11 +60,28 @@ export interface ModelLookup {
 
 export type TraceSide = 'left' | 'right' | 'center' | 'both';
 
+export type Protocol = 'nidek' | 'vca';
+
 export interface TraceFinished {
   side: TraceSide;
   ok: boolean;
   error?: string;
   measurement: Measurement;
+}
+
+export type WireDir = 'tx' | 'rx';
+export interface WireEvent {
+  time: string;
+  dir: WireDir;
+  hex: string;
+  n: number;
+}
+
+export interface TraceRaw {
+  protocol: Protocol | string;
+  bytes: number;
+  hex: string;
+  ascii: string;
 }
 
 export interface SaveResult {

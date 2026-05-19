@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,6 +30,12 @@ public:
         uint32_t writeTotalMs{2000};
     };
 
+    // Sniffer hook. dir is 't' for bytes the PC sent, 'r' for bytes received.
+    // Fires once per ReadFile/WriteFile chunk on the worker thread; the
+    // callback must be thread-safe and non-blocking.
+    using WireCallback = std::function<void(char dir, const uint8_t* data, size_t n)>;
+    void setWireCallback(WireCallback cb) { wireCb_ = std::move(cb); }
+
     // portName: "COM3", "COM12", etc.  Returns empty error on success.
     std::string open(std::string_view portName, const Settings& s);
     bool isOpen() const { return handle_ != INVALID_HANDLE_VALUE; }
@@ -43,6 +50,10 @@ public:
         return write(reinterpret_cast<const uint8_t*>(s.data()), s.size());
     }
 
+    // Read exactly `n` bytes, or fewer if `totalMs` elapses first. Used by
+    // fixed-length protocols (Nidek native: 128-byte chunks, 5-byte status, ...).
+    std::vector<uint8_t> readExact(size_t n, uint32_t totalMs);
+
     // Drain whatever is currently in the input buffer.  Stops once the device
     // has been silent for `quietMs` milliseconds or `maxBytes` is hit.
     std::vector<uint8_t> readUntilQuiet(uint32_t quietMs, size_t maxBytes = 64 * 1024);
@@ -56,7 +67,9 @@ public:
 private:
     HANDLE handle_{INVALID_HANDLE_VALUE};
     std::string err_;
+    WireCallback wireCb_;
     void setLastError_(std::string_view ctx);
+    void emitWire_(char dir, const uint8_t* data, size_t n);
 };
 
 std::vector<std::string> listSerialPorts();
