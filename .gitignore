@@ -1,7 +1,10 @@
 build/
+build-release/
 out/
 obj/
 cmake-build-*/
+build.log
+VTracer-*-win-x64.zip
 .cache/
 .vs/
 .vscode/

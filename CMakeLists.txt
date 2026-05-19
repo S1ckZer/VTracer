@@ -9,6 +9,11 @@ if(NOT WIN32)
     message(FATAL_ERROR "VTracer is Windows-only (uses Win32 + WebView2).")
 endif()
 
+# Statically link the MSVC C/C++ runtime so the exe runs on machines without
+# the VC++ Redistributable installed. Pairs with the static WebView2 loader
+# below to produce a single, self-contained binary.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 option(NIDEK_BUILD_FRONTEND "Run npm to build the Vue frontend at configure time" ON)
 
 # --- Locate WebView2 SDK ---------------------------------------------------
